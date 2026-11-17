@@ -56,13 +56,18 @@ Z_LEVELS = [-1.644854, -0.674490, 0.0, 0.674490, 1.644854]
 # Calibration, fitted by leave-one-out cross-validation over the comparable
 # launches shipped in the competition kit (each launch forecast from the
 # others, scored with this contest's pinball loss): on launches resembling
-# this one (already awake at hour 1) the fitted model scored a mean loss of
-# about 0.216 against about 0.271 for plain persistence.
+# this one (already awake at hour 1) the fitted model scores a mean loss of
+# 0.214 against 0.271 for plain persistence, and its 5%-95% band covers
+# 91.8% of realised hours on that subset (an honest band covers about 90%).
+# The v1 constants (kernel 0.9, no scale inflation) scored 0.216 with 87.7%
+# coverage there; the tighter kernel matches pool members more closely, and
+# the 5% scale inflation repays the band's measured undercoverage.
 AWAKE_FRACTION = 0.15   # hour 1 must hold at least this share of the day peak
 AWAKE_MIN_MEMBERS = 8   # below this, the awake cut is dropped rather than starve the pool
-KERNEL_BANDWIDTH = 0.9  # Gaussian kernel width on the log footing features
+KERNEL_BANDWIDTH = 0.75  # Gaussian kernel width on the log footing features
 SMOOTHING = 0.3         # pull of each hour's location/scale toward its neighbours
 MIN_SCALE = 0.08        # floor for an hour's log-ratio deviation
+SCALE_INFLATION = 1.05  # widen every hour's spread by this, for calibration
 MIN_POOL = 5            # fewer usable launches than this and we fall back
 
 
@@ -254,7 +259,8 @@ def pooled_forecast(case, p1, hours, levels):
     if not residuals:
         return None
     shape = [weighted_quantile(residuals, level) for level in levels]
-    return {h: [p1 * math.exp(centres[h] + scales[h] * s) for s in shape]
+    return {h: [p1 * math.exp(centres[h] + SCALE_INFLATION * scales[h] * s)
+                for s in shape]
             for h in hours}
 
 

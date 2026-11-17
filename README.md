@@ -45,12 +45,15 @@ the contest's own pinball loss:
 
 | launches resembling this one (awake at hour 1) | mean loss |
 | --- | --- |
-| this model | **0.216** |
+| this model | **0.214** |
 | persistence baseline (the house starter) | 0.271 |
 
-Across all 37 past launches the model scores 0.856 against the baseline's
-0.930, and its 5%–95% band covered 87.7% of realised hours on the
-resembling subset (an honest band covers about 90%).
+Across all 37 past launches the model scores 0.849 against the baseline's
+0.930, and its 5%–95% band covered 91.8% of realised hours on the
+resembling subset (an honest band covers about 90%). The kernel width and
+a 5% spread inflation were refitted after the first graded practice run
+showed the band undercovering (77% there): tighter footing matching for
+location, a slightly wider spread for calibration.
 
 ## Running it locally
 
