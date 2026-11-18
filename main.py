@@ -17,7 +17,10 @@ three ideas on top:
     this case's: the ratio of hour 1 to the best and to the average of the
     hours just before the day began, compared in log space with a Gaussian
     kernel. Launches that arrived at hour 1 the same way this one did count
-    most.
+    most. Each hour's centre is then a kernel-weighted regression of that
+    hour's log-ratio on the log of hour 1 over the pre-day 24-hour max:
+    launches that were still small against their pre-release hype climb
+    further, and the centre is read at this case's own footing.
   * The spread is not assumed normal: each hour's log-ratios are centred and
     scaled by that hour's pooled mean and deviation, the standardised
     residuals of all hours are pooled, and their empirical quantiles give the
@@ -57,11 +60,14 @@ Z_LEVELS = [-1.644854, -0.674490, 0.0, 0.674490, 1.644854]
 # launches shipped in the competition kit (each launch forecast from the
 # others, scored with this contest's pinball loss): on launches resembling
 # this one (already awake at hour 1) the fitted model scores a mean loss of
-# 0.214 against 0.271 for plain persistence, and its 5%-95% band covers
-# 91.8% of realised hours on that subset (an honest band covers about 90%).
-# The v1 constants (kernel 0.9, no scale inflation) scored 0.216 with 87.7%
-# coverage there; the tighter kernel matches pool members more closely, and
-# the 5% scale inflation repays the band's measured undercoverage.
+# 0.213 against 0.271 for plain persistence, and its 5%-95% band covers
+# 92.7% of realised hours on that subset (an honest band covers about 90%).
+# The v2 constants (kernel 0.75, 5% scale inflation, weighted-mean centres)
+# scored 0.214 with 91.8% coverage there; the v3 centre is a kernel-weighted
+# regression on each launch's own footing (log hour-1 / pre-day 24h max),
+# which lifts the centres of still-ramping launches and improves every
+# subset on the same harness (LIKE 0.2144 -> 0.2134, RAMP 0.8401 -> 0.7894,
+# all-37 0.8488 -> 0.8306).
 AWAKE_FRACTION = 0.15   # hour 1 must hold at least this share of the day peak
 AWAKE_MIN_MEMBERS = 8   # below this, the awake cut is dropped rather than starve the pool
 KERNEL_BANDWIDTH = 0.75  # Gaussian kernel width on the log footing features
@@ -194,6 +200,24 @@ def _z_for(level):
     return table[-1][1]
 
 
+def _solve2(a, b):
+    """Solve a 2x2 linear system by Gaussian elimination; None if singular."""
+    m = [row[:] + [bb] for row, bb in zip(a, b)]
+    for col in range(2):
+        piv = max(range(col, 2), key=lambda r: abs(m[r][col]))
+        if abs(m[piv][col]) < 1e-12:
+            return None
+        m[col], m[piv] = m[piv], m[col]
+        for r in range(col + 1, 2):
+            f = m[r][col] / m[col][col]
+            for c in range(col, 3):
+                m[r][c] -= f * m[col][c]
+    x = [0.0, 0.0]
+    for i in (1, 0):
+        x[i] = (m[i][2] - sum(m[i][j] * x[j] for j in range(i + 1, 2))) / m[i][i]
+    return x
+
+
 def pooled_forecast(case, p1, hours, levels):
     """The fitted forecast, or None when the case's pool is too thin."""
     day_start = parse_time(case["day_start"])
@@ -241,6 +265,39 @@ def pooled_forecast(case, p1, hours, levels):
     for h in range(2, 25):
         pairs = [(launch.log_ratio[h], w) for launch, w in weights if h in launch.log_ratio]
         raw[h] = pairs
+        if len(pairs) >= 6 and target_a is not None:
+            # v3: regress each hour's log-ratio on the launch's own footing
+            # (log foot_a = log hour-1 / pre-day 24h max) instead of taking a
+            # plain weighted mean. Launches that arrived at hour 1 small
+            # against their pre-release hype climb further during the day
+            # (LIKE corr -0.45 between log foot_a and peak log-ratio), so the
+            # centre is evaluated at THIS case's footing, not the pool's.
+            # One slope only: adding log foot_b as a second regressor
+            # overfits (LIKE loss 0.2233 on the same harness).
+            ata = [[0.0, 0.0], [0.0, 0.0]]
+            atb = [0.0, 0.0]
+            for launch, w in weights:
+                if h not in launch.log_ratio:
+                    continue
+                x = [1.0, math.log(launch.foot_a)]
+                y = launch.log_ratio[h]
+                for i in range(2):
+                    atb[i] += w * x[i] * y
+                    for j in range(2):
+                        ata[i][j] += w * x[i] * x[j]
+            beta = _solve2(ata, atb)
+            if beta is not None:
+                centre = beta[0] + beta[1] * math.log(target_a)
+                total = sum(w for _, w in pairs)
+                var = 0.0
+                for launch, w in weights:
+                    if h not in launch.log_ratio:
+                        continue
+                    fit = beta[0] + beta[1] * math.log(launch.foot_a)
+                    var += w * (launch.log_ratio[h] - fit) ** 2
+                spread = math.sqrt(max(var / total, 1e-9))
+                centres[h], scales[h] = centre, max(spread, MIN_SCALE)
+                continue
         if len(pairs) >= 3:
             centre, spread = weighted_mean_sd(pairs)
             centres[h], scales[h] = centre, max(spread, MIN_SCALE)
